@@ -1,6 +1,5 @@
 package com.minzoid.mockproject;
 
-import com.tcoded.folialib.FoliaLib;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -17,15 +16,13 @@ import java.util.UUID;
 
 public final class MockProject extends JavaPlugin implements Listener {
 
-    private FoliaLib foliaLib;
     private PlayerDataService playerDataService;
     private final Set<UUID> processedPlayers = new HashSet<>();
 
     @Override
     public void onEnable() {
-        this.foliaLib = new FoliaLib(this);
         // Initialize real SQLite database wrapped as our async Mock database
-        this.playerDataService = new PlayerDataService(this, foliaLib);
+        this.playerDataService = new PlayerDataService(this);
 
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -34,11 +31,21 @@ public final class MockProject extends JavaPlugin implements Listener {
             public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
                 if (sender instanceof Player player) {
                     playerDataService.loadPlayerData(player.getUniqueId()).thenAccept(data -> {
-                        foliaLib.getScheduler().runAtEntity(player, task -> {
+                        player.getScheduler().run(MockProject.this, task -> {
+                            if (!player.isOnline()) return;
                             player.sendMessage("§a[MockProject] Your current database data:");
                             player.sendMessage("§eHealth: §f" + data.getHealth());
                             player.sendMessage("§eLevel: §f" + data.getLevel());
-                        });
+                            player.sendMessage("§7(Native Folia) plugin v" + getPluginMeta().getVersion());
+                        }, null);
+                    }).exceptionally(ex -> {
+                        getLogger().severe("Failed to load data for /checkdata: " + ex.getMessage());
+                        player.getScheduler().run(MockProject.this, task -> {
+                            if (player.isOnline()) {
+                                player.sendMessage("§c[MockProject] Failed to load your data. Check console.");
+                            }
+                        }, null);
+                        return null;
                     });
                 } else {
                     sender.sendMessage("This command is for players only.");

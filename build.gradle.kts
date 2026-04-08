@@ -7,10 +7,7 @@ plugins {
 
 repositories {
     mavenCentral()
-    maven {
-        name = "tcoded-releases"
-        url = uri("https://repo.tcoded.com/releases")
-    }
+
     maven {
         name = "papermc"
         url = uri("https://repo.papermc.io/repository/maven-public/")
@@ -18,7 +15,6 @@ repositories {
 }
 
 dependencies {
-    implementation("com.tcoded:FoliaLib:0.5.1")
     paperweight.paperDevBundle("1.21.4-R0.1-SNAPSHOT")
 }
 
@@ -36,7 +32,6 @@ tasks {
 
     shadowJar {
         archiveClassifier.set("") // normal plugin jar name
-        relocate("com.tcoded.folialib", "com.minzoid.mockproject.lib.folialib")
     }
 
     runServer {

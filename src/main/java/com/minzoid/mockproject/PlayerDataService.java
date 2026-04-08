@@ -1,6 +1,5 @@
 package com.minzoid.mockproject;
 
-import com.tcoded.folialib.FoliaLib;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -16,13 +15,11 @@ import java.util.concurrent.CompletableFuture;
 
 public class PlayerDataService {
 
-    private final FoliaLib foliaLib;
     private final JavaPlugin plugin;
     private Connection connection;
 
-    public PlayerDataService(JavaPlugin plugin, FoliaLib foliaLib) {
+    public PlayerDataService(JavaPlugin plugin) {
         this.plugin = plugin;
-        this.foliaLib = foliaLib;
         setupDatabase();
     }
 
@@ -80,13 +77,13 @@ public class PlayerDataService {
         UUID uuid = player.getUniqueId();
 
         loadPlayerData(uuid).thenAccept(data -> {
-            foliaLib.getScheduler().runAtEntity(player, task -> {
+            player.getScheduler().run(plugin, task -> {
                 if (!player.isOnline() || player.isDead()) return;
 
                 player.setHealth(data.getHealth());
                 player.setLevel(data.getLevel());
                 player.sendMessage("§a[MockProject] Your data was safely applied while moving!");
-            });
+            }, null);
         });
     }
 

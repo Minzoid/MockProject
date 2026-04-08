@@ -1,0 +1,11 @@
+name: mockproject
+version: '1.0.0'
+
+main: com.minzoid.mockproject.MockProject
+api-version: '1.21.4'
+load: POSTWORLD
+folia-supported: true
+commands:
+  checkdata:
+    description: Check the loaded data from the database
+    usage: /<command>

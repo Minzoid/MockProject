@@ -10,14 +10,15 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
 
 public final class MockProject extends JavaPlugin implements Listener {
 
     private PlayerDataService playerDataService;
-    private final Set<UUID> processedPlayers = new HashSet<>();
+    private final Set<UUID> processedPlayers = ConcurrentHashMap.newKeySet();
 
     @Override
     public void onEnable() {
@@ -39,7 +40,7 @@ public final class MockProject extends JavaPlugin implements Listener {
                             player.sendMessage("§7(Native Folia) plugin v" + getPluginMeta().getVersion());
                         }, null);
                     }).exceptionally(ex -> {
-                        getLogger().severe("Failed to load data for /checkdata: " + ex.getMessage());
+                        getLogger().log(Level.SEVERE, "Failed to load data for /checkdata", ex);
                         player.getScheduler().run(MockProject.this, task -> {
                             if (player.isOnline()) {
                                 player.sendMessage("§c[MockProject] Failed to load your data. Check console.");
@@ -59,6 +60,9 @@ public final class MockProject extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        if (playerDataService != null) {
+            playerDataService.shutdown();
+        }
         getLogger().info("MockProject disabled!");
     }
 
@@ -78,8 +82,7 @@ public final class MockProject extends JavaPlugin implements Listener {
         }
         
         // Ensure data is loaded and applied once they move
-        if (!processedPlayers.contains(player.getUniqueId())) {
-            processedPlayers.add(player.getUniqueId());
+        if (processedPlayers.add(player.getUniqueId())) {
             playerDataService.loadAndApply(player);
         }
     }

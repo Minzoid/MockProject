@@ -12,71 +12,91 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 
 public class PlayerDataService {
 
     private final JavaPlugin plugin;
-    private Connection connection;
+    private final String jdbcUrl;
+    private final ExecutorService dbExecutor;
 
     public PlayerDataService(JavaPlugin plugin) {
         this.plugin = plugin;
+        this.jdbcUrl = buildJdbcUrl();
+        int dbThreads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+        this.dbExecutor = Executors.newFixedThreadPool(dbThreads, new ThreadFactory() {
+            private int index = 1;
+
+            @Override
+            public Thread newThread(Runnable runnable) {
+                Thread thread = new Thread(runnable, "mockproject-db-" + index++);
+                thread.setDaemon(true);
+                return thread;
+            }
+        });
         setupDatabase();
     }
 
+    private String buildJdbcUrl() {
+        if (!plugin.getDataFolder().exists()) {
+            plugin.getDataFolder().mkdirs();
+        }
+        File dbFile = new File(plugin.getDataFolder(), "mock_database.db");
+        return "jdbc:sqlite:" + dbFile.getAbsolutePath();
+    }
+
     private void setupDatabase() {
-        try {
-            if (!plugin.getDataFolder().exists()) {
-                plugin.getDataFolder().mkdirs();
-            }
-            File dbFile = new File(plugin.getDataFolder(), "mock_database.db");
-            // Connect to SQLite database using Bukkit's bundled SQLite driver
-            connection = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath());
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE IF NOT EXISTS player_data (" +
-                                  "uuid TEXT PRIMARY KEY," +
-                                  "health REAL," +
-                                  "level INTEGER)");
-            }
+        // Runs during plugin enable (server thread). Uses a short-lived connection.
+        try (Connection connection = DriverManager.getConnection(jdbcUrl);
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE IF NOT EXISTS player_data (" +
+                              "uuid TEXT PRIMARY KEY," +
+                              "health REAL," +
+                              "level INTEGER)");
             plugin.getLogger().info("SQLite Mock Database initialized successfully.");
         } catch (SQLException e) {
-            e.printStackTrace();
+            plugin.getLogger().severe("Failed to initialize SQLite database: " + e.getMessage());
         }
     }
 
-    // Mock async database load
+    // Runs on dedicated DB executor only. Never touch Bukkit/Player API here.
     public CompletableFuture<PlayerData> loadPlayerData(UUID uuid) {
         return CompletableFuture.supplyAsync(() -> {
-            try {
-                // simulate DB delay
-                Thread.sleep(100); 
-                
-                try (PreparedStatement select = connection.prepareStatement("SELECT * FROM player_data WHERE uuid = ?")) {
-                    select.setString(1, uuid.toString());
-                    try (ResultSet rs = select.executeQuery()) {
-                        if (rs.next()) {
-                            return new PlayerData(uuid, rs.getDouble("health"), rs.getInt("level"));
-                        } else {
-                            try (PreparedStatement insert = connection.prepareStatement("INSERT INTO player_data (uuid, health, level) VALUES (?, ?, ?)")) {
-                                insert.setString(1, uuid.toString());
-                                insert.setDouble(2, 20.0);
-                                insert.setInt(3, 10);
-                                insert.executeUpdate();
-                                return new PlayerData(uuid, 20.0, 10);
-                            }
-                        }
+            try (Connection connection = DriverManager.getConnection(jdbcUrl);
+                 PreparedStatement select = connection.prepareStatement("SELECT health, level FROM player_data WHERE uuid = ?")) {
+                // Isolated SQL work on this thread-local connection.
+                select.setString(1, uuid.toString());
+                try (ResultSet rs = select.executeQuery()) {
+                    if (rs.next()) {
+                        return new PlayerData(uuid, rs.getDouble("health"), rs.getInt("level"));
                     }
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+
+                try (PreparedStatement insert = connection.prepareStatement(
+                    "INSERT INTO player_data (uuid, health, level) VALUES (?, ?, ?)")) {
+                    insert.setString(1, uuid.toString());
+                    insert.setDouble(2, 20.0);
+                    insert.setInt(3, 10);
+                    insert.executeUpdate();
+                }
+
+                return new PlayerData(uuid, 20.0, 10);
+            } catch (SQLException e) {
+                plugin.getLogger().severe("Failed to load player data for " + uuid + ": " + e.getMessage());
                 return new PlayerData(uuid, 20.0, 10); // fallback
             }
-        });
+        }, dbExecutor);
     }
 
     public void loadAndApply(Player player) {
+        // Capture only immutable/simple data before async boundary.
         UUID uuid = player.getUniqueId();
 
         loadPlayerData(uuid).thenAccept(data -> {
+            // Back on the player's Folia thread before touching Player API.
             player.getScheduler().run(plugin, task -> {
                 if (!player.isOnline() || player.isDead()) return;
 
@@ -85,6 +105,18 @@ public class PlayerDataService {
                 player.sendMessage("§a[MockProject] Your data was safely applied while moving!");
             }, null);
         });
+    }
+
+    public void shutdown() {
+        dbExecutor.shutdown();
+        try {
+            if (!dbExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                dbExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            dbExecutor.shutdownNow();
+        }
     }
 
     public static class PlayerData {
